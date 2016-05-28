@@ -1,0 +1,50 @@
+application: itsweb-0002
+
+version: live
+runtime: python27
+api_version: 1
+threadsafe: true
+
+instance_class: F2
+automatic_scaling:
+  max_idle_instances: 1
+  min_pending_latency: 5.0s
+
+
+default_expiration: "10m"
+
+handlers:
+- url: /favicon\.ico
+  static_files: static/img/favicon.ico
+  upload: static/img/favicon\.ico
+
+- url: /robots\.txt
+  static_files: robots.txt
+  upload: robots.txt
+
+- url: /static
+  static_dir: static
+
+- url: /_ah/queue/deferred
+  script: google.appengine.ext.deferred.deferred.application
+  login: admin
+
+- url: /.*
+  script: run.app
+  secure: optional
+
+libraries:
+- name: jinja2
+  version: latest
+
+inbound_services:
+- warmup
+- mail
+
+builtins:
+- deferred: on
+
+skip_files:
+- ^(.*/)?setuptools\r
+- ^lib/setuptools/.*
+- ^(.*/)?.*\.py[co]

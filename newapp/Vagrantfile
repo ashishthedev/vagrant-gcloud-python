@@ -1,0 +1,201 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+# author: ashishthedev@gmail.com (Ashish Anand)
+
+###################################################################
+$ubuntuSetup = <<SCRIPT
+
+set -v
+
+PROVISIONED_ON=/var/vagrant_provisioned_at
+
+echo "Provisioning begins for Ubuntu 14.04.3 LTS (GNU/Linux 3.13.0-55-generic i686) box..."
+
+#Download latest index of available packages
+apt-get update
+apt-get -y upgrade
+
+apt-get install -yq \
+    git build-essential supervisor python python-dev python-pip libffi-dev \
+    libssl-dev \
+    nginx \
+    tree \
+    unzip \
+    supervisor
+
+# pip from apt is out of date, so make it update itself
+pip install --upgrade pip 
+
+mkdir -p /vagrant/bin
+
+chown vagrant:vagrant -R /tmp
+#chown pythonapp:pythonapp -R /opt/app
+
+
+cat >> /home/vagrant/.bash_aliases <<EOL
+alias ..='cd ..'
+alias g='sudo vim'
+alias al='vim ~/.bash_aliases'
+alias re='source ~/.bash_aliases'
+alias atdtime='sudo timedatectl set-timezone Asia/Kolkata'
+findFile(){
+find . -name "*\$\1*"
+}
+alias ff=findFile
+
+findInAll(){ grep -i -r \$\1 --include "*"; }
+alias fia=findInAll
+
+alias runserver='python /home/vagrant/google-cloud-sdk/bin/dev_appserver.py /vagrant/app.yaml --host 0.0.0.0 --admin_host 0.0.0.0 --storage_path /home/vagrant/storage --skip_sdk_update_check'
+
+EOL
+
+cat >> /home/vagrant/.pam_environment <<EOL
+PYTHONPATH=/vagrant
+DJANGO_SETTINGS_MODULE=adaptwater.settings.vagrant
+EOL
+
+cat >>/home/vagrant/.vimrc<<EOL
+set nu
+map \\\\ :q!<CR>
+map <leader>v :e /home/vagarant/.vimrc<CR>
+map <space> /
+map ,re :source ~/.vimrc<CR>
+imap <tab> <C-X><C-P>
+map j gj
+map k gk
+inoremap jk <ESC>
+noremap - gT
+noremap <c-space> gt
+noremap <leader>t :Tex<CR>
+noremap <C-s> :w<CR>
+colorscheme slate
+:autocmd InsertEnter,InsertLeave * set cul!
+:hi CursorLine cterm=NONE ctermbg=grey
+set incsearch
+EOL
+
+sudo cat > /etc/supervisor/conf.d/vagrant_itsweb.conf <<EOL
+[program:vagrant_itsweb]
+command=dev_appserver.py /vagrant/app.yaml --host 0.0.0.0 --admin_host 0.0.0.0 --storage_path /home/vagrant/storage --skip_sdk_update_check
+stdout_logfile=/vagrant/vagrantlogs.log
+autostart=true
+redirect_stderr=true
+EOL
+
+
+supervisorctl reread
+supervisorctl update
+
+# Tag the provision time:
+date > "$PROVISIONED_ON"
+
+SCRIPT
+
+###################################################################
+$googleSDKSetup = <<SCRIPT
+
+set -v
+
+echo '*** Setup Google Cloud SDK'
+
+echo ' ** Installing python packages'
+sudo apt-get install -y python-dev python-setuptools python-pip python-software-properties python g++ make
+
+# Make the helper binaries executable and globally available
+echo ' ** Setup support CLI commands'
+cd /vagrant/environment/utils
+chmod +x app-server
+chmod +x app-deploy
+
+# Download Cloud SDK
+echo ' ** Setup Google Cloud SDK command-line tools'
+echo '  * Downloading Cloud SDK'
+cd /home/vagrant
+wget -q https://dl.google.com/dl/cloudsdk/release/google-cloud-sdk.tar.gz
+tar xzvpf google-cloud-sdk.tar.gz
+rm google-cloud-sdk.tar.gz
+
+# Silent install Cloud SDK
+echo '  * Installing Cloud SDK'
+
+./google-cloud-sdk/install.sh --rc-path=/home/vagrant/.bashrc --command-completion=true --path-update=true --usage-reporting=false --additional-components=app-engine-python --additional-components=cloud-datastore-emulator --quiet
+
+
+# Install GAE language packages
+echo '  * Installing Cloud SDK python deps'
+#./google-cloud-sdk/bin/gcloud components update app-engine-python cloud-datastore-emulator
+
+# Install GAE new preview feature (dev_appserver 2)
+echo '  * Installing Cloud SDK app features'
+#./google-cloud-sdk/bin/gcloud components update app -q
+
+sudo chown vagrant:vagrant -R google-cloud-sdk/
+
+echo '*** /Finished setting up Cloud SDK'
+
+SCRIPT
+
+
+
+###################################################################
+
+$requirementsSetup = <<SCRIPT
+
+set -v
+echo '*** Installing the following requirements in lib folder'
+cat /vagrant/requirements.txt
+pip install -r /vagrant/requirements.txt -t /vagrant/lib
+
+SCRIPT
+
+###################################################################
+
+$bashrcSetup = <<SCRIPT
+set -v
+
+cat >> /home/vagrant/.bashrc <<EOL
+
+export PATH=/vagrant/environment/utils:/home/vagrant/google-cloud-sdk/bin:\$PATH
+PROMPT_DIRTRIM=2
+eval \"$BASH_POST_RC\"
+cd /vagrant
+tail -f /vagrant/vagrantlogs.log
+EOL
+
+echo ' ** Fixing colors'
+sed -i 's/#force_color_prompt=yes/force_color_prompt=yes/g' /home/vagrant/.bashrc
+
+SCRIPT
+
+
+###################################################################
+
+
+VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.vm.provider('virtualbox') do |vb, override|
+    vb.memory = 1024*1  #Run command 'free -h' from inside vagrant to see how much memory is allocated.
+  end
+  config.vm.box = "ubuntu/trusty32"  #More boxes can be discovered at https://vagrantcloud.com/ubuntu
+  #
+  # If true, then any SSH connections made will enable agent forwarding.
+  # Default value: false
+  config.ssh.forward_agent = true
+  #
+  # Forward ports for modules. The maximum number of modules is 9
+  for i in 8080..8089
+    config.vm.network :forwarded_port, guest: i, host: i
+  end
+
+  config.vm.network :forwarded_port, guest: 8000, host: 8000, auto_correct: true
+  # Provision Ubuntu box
+  config.vm.provision "shell", inline: $ubuntuSetup
+  config.vm.provision "shell", inline: $googleSDKSetup
+  config.vm.provision "shell", inline: $requirementsSetup
+  # Provision the bashrc after google sdk has inserted its settings there
+  config.vm.provision "shell", inline: $bashrcSetup
+
+
+end
